@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>表格识别工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        
+        .upload-area.dragover {
+            border-color: #007bff;
+            background: #f8f9fa;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        .btn:hover {
+            background: #0056b3;
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .preview {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .preview img {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 4px;
+        }
+        
+        .result {
+            margin-top: 20px;
+            display: none;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        
+        th {
+            background: #f8f9fa;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+        
+        .error {
+            color: #dc3545;
+            background: #f8d7da;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            display: none;
+        }
+        
+        .success {
+            color: #155724;
+            background: #d4edda;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 表格识别工具</h1>
+        
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <p>拖拽图片到这里，或点击选择文件</p>
+            <p><small>支持PNG、JPG、BMP等格式，或直接粘贴截图</small></p>
+            <input type="file" id="fileInput" class="file-input" accept="image/*">
+            <br>
+            <button class="btn" onclick="document.getElementById('fileInput').click()">选择文件</button>
+            <button class="btn" onclick="pasteImage()">粘贴截图</button>
+        </div>
+        
+        <div class="preview" id="preview">
+            <h3>图片预览</h3>
+            <img id="previewImage" src="" alt="预览">
+            <br>
+            <button class="btn" onclick="recognizeTable()">识别表格</button>
+            <button class="btn" onclick="clearAll()">重新选择</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <p>正在识别表格中...</p>
+        </div>
+        
+        <div class="error" id="error"></div>
+        
+        <div class="result" id="result">
+            <h3>识别结果</h3>
+            <div id="tableContainer"></div>
+            <br>
+            <button class="btn" onclick="downloadCSV()">下载CSV</button>
+            <button class="btn" onclick="clearAll()">重新开始</button>
+        </div>
+    </div>
+
+    <script>
+        let currentImageData = null;
+        
+        // 文件选择处理
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+        
+        // 拖拽处理
+        const uploadArea = document.getElementById('uploadArea');
+        uploadArea.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', function() {
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', function(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) {
+                handleFile(file);
+            }
+        });
+        
+        // 粘贴图片处理
+        async function pasteImage() {
+            try {
+                // 尝试使用新的Clipboard API
+                if (navigator.clipboard && navigator.clipboard.read) {
+                    const items = await navigator.clipboard.read();
+                    for (const item of items) {
+                        for (const type of item.types) {
+                            if (type.startsWith('image/')) {
+                                const blob = await item.getType(type);
+                                const file = new File([blob], 'pasted-image.png', { type: type });
+                                handleFile(file);
+                                return;
+                            }
+                        }
+                    }
+                }
+                
+                // 如果新API不可用或没有图片，尝试传统方法
+                const pasteArea = document.createElement('textarea');
+                pasteArea.style.position = 'fixed';
+                pasteArea.style.left = '-1000px';
+                document.body.appendChild(pasteArea);
+                pasteArea.focus();
+                
+                // 显示提示信息
+                showError('请先截图，然后按 Ctrl+V 粘贴到页面上');
+                
+                // 监听粘贴事件
+                const pasteHandler = function(e) {
+                    e.preventDefault();
+                    const items = e.clipboardData.items;
+                    
+                    for (let i = 0; i < items.length; i++) {
+                        if (items[i].type.indexOf('image') !== -1) {
+                            const blob = items[i].getAsFile();
+                            const file = new File([blob], 'pasted-image.png', { type: 'image/png' });
+                            handleFile(file);
+                            document.body.removeChild(pasteArea);
+                            document.removeEventListener('paste', pasteHandler);
+                            hideError();
+                            return;
+                        }
+                    }
+                    showError('剪贴板中没有找到图片，请确保已截图');
+                };
+                
+                document.addEventListener('paste', pasteHandler);
+                
+                // 5秒后清理
+                setTimeout(() => {
+                    document.body.removeChild(pasteArea);
+                    document.removeEventListener('paste', pasteHandler);
+                }, 5000);
+                
+            } catch (err) {
+                showError('请使用系统截图工具截图，然后按 Ctrl+V 粘贴');
+            }
+        }
+        
+        // 处理文件
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showError('请选择图片文件');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                currentImageData = e.target.result;
+                document.getElementById('previewImage').src = currentImageData;
+                document.getElementById('preview').style.display = 'block';
+                document.getElementById('uploadArea').style.display = 'none';
+                hideError();
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        // 识别表格
+        async function recognizeTable() {
+            if (!currentImageData) {
+                showError('请先选择图片');
+                return;
+            }
+            
+            showLoading();
+            hideError();
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image_data: currentImageData
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayResult(result);
+                } else {
+                    showError(result.error || '识别失败');
+                }
+            } catch (err) {
+                showError('网络错误: ' + err.message);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        // 显示结果
+        function displayResult(result) {
+            const tableContainer = document.getElementById('tableContainer');
+            
+            // 创建表格
+            let html = `<p>识别到 ${result.row_count} 行 ${result.col_count} 列数据</p>`;
+            html += '<table>';
+            
+            // 表头
+            html += '<tr>';
+            result.headers.forEach(header => {
+                html += `<th>${header}</th>`;
+            });
+            html += '</tr>';
+            
+            // 数据行
+            result.table_data.forEach(row => {
+                html += '<tr>';
+                result.headers.forEach(header => {
+                    html += `<td>${row[header] || ''}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</table>';
+            tableContainer.innerHTML = html;
+            
+            document.getElementById('result').style.display = 'block';
+            document.getElementById('preview').style.display = 'none';
+        }
+        
+        // 下载CSV
+        function downloadCSV() {
+            const table = document.querySelector('table');
+            let csv = '';
+            
+            // 获取表头
+            const headers = [];
+            table.querySelectorAll('th').forEach(th => {
+                headers.push(th.textContent);
+            });
+            csv += headers.join(',') + '\n';
+            
+            // 获取数据
+            table.querySelectorAll('tr').forEach(tr => {
+                const tds = tr.querySelectorAll('td');
+                if (tds.length > 0) {
+                    const row = [];
+                    tds.forEach(td => {
+                        row.push(`"${td.textContent.replace(/"/g, '""')}"`);
+                    });
+                    csv += row.join(',') + '\n';
+                }
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'table_data.csv';
+            link.click();
+        }
+        
+        // 清空所有
+        function clearAll() {
+            currentImageData = null;
+            document.getElementById('fileInput').value = '';
+            document.getElementById('preview').style.display = 'none';
+            document.getElementById('result').style.display = 'none';
+            document.getElementById('uploadArea').style.display = 'block';
+            hideError();
+        }
+        
+        // 工具函数
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function showError(message) {
+            document.getElementById('error').textContent = message;
+            document.getElementById('error').style.display = 'block';
+        }
+        
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
