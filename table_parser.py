@@ -14,11 +14,19 @@ class TableParser:
         if not table_data:
             raise ValueError("表格数据为空")
         
-        # 第一行作为表头
+        # 第一行作为表头，处理空列名
         headers = table_data[0]
         data_rows = table_data[1:] if len(table_data) > 1 else []
         
-        return pd.DataFrame(data_rows, columns=headers)
+        # 为空的列名生成默认列名
+        processed_headers = []
+        for i, header in enumerate(headers):
+            if header.strip() == "":
+                processed_headers.append(f"列{i+1}")
+            else:
+                processed_headers.append(header)
+        
+        return pd.DataFrame(data_rows, columns=processed_headers)
     
     def save_to_csv(self, df: pd.DataFrame, output_path: str) -> bool:
         """保存为CSV文件"""

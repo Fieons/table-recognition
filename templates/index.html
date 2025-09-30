@@ -120,12 +120,26 @@
         }
         
         .error {
-            color: #dc3545;
+            color: #721c24;
             background: #f8d7da;
-            padding: 10px;
+            padding: 15px;
             border-radius: 4px;
             margin-top: 10px;
             display: none;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .error h4 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+        }
+        
+        .error .solution {
+            background: #f1b0b7;
+            padding: 8px;
+            border-radius: 3px;
+            margin-top: 8px;
+            font-size: 14px;
         }
         
         .success {
@@ -256,7 +270,9 @@
                 
                 // 5秒后清理
                 setTimeout(() => {
-                    document.body.removeChild(pasteArea);
+                    if (document.body.contains(pasteArea)) {
+                        document.body.removeChild(pasteArea);
+                    }
                     document.removeEventListener('paste', pasteHandler);
                 }, 5000);
                 
@@ -293,29 +309,83 @@
             showLoading();
             hideError();
             
-            try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        image_data: currentImageData
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    displayResult(result);
-                } else {
-                    showError(result.error || '识别失败');
+            // 重试机制
+            const maxRetries = 3;
+            let retryCount = 0;
+            
+            while (retryCount < maxRetries) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 180000); // 180秒超时
+                    
+                    const response = await fetch('/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            image_data: currentImageData
+                        }),
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        displayResult(result);
+                        return;
+                    } else {
+                        // 显示详细的错误信息和解决方案
+                        let errorHtml = `<h4>❌ ${result.error || '识别失败'}</h4>`;
+                        if (result.solution) {
+                            errorHtml += `<div class="solution">💡 解决方案: ${result.solution}</div>`;
+                        }
+                        if (result.error_type) {
+                            errorHtml += `<small>错误类型: ${result.error_type}</small>`;
+                        }
+                        showError(errorHtml);
+                        return;
+                    }
+                } catch (err) {
+                    retryCount++;
+                    
+                    if (retryCount === maxRetries) {
+                        let errorMessage = '';
+                        let solution = '';
+                        
+                        if (err.name === 'AbortError') {
+                            errorMessage = '请求超时';
+                            solution = '请检查网络连接，或稍后重试';
+                        } else if (err.message.includes('Failed to fetch')) {
+                            errorMessage = '网络连接失败';
+                            solution = '请检查网络连接，或刷新页面重试';
+                        } else if (err.message.includes('500')) {
+                            errorMessage = '服务器内部错误 (HTTP 500)';
+                            solution = '服务器暂时不可用，请稍后重试或联系技术支持';
+                        } else {
+                            errorMessage = '网络错误: ' + err.message;
+                            solution = '请检查网络连接和服务器状态';
+                        }
+                        
+                        let errorHtml = `<h4>❌ ${errorMessage}</h4>`;
+                        if (solution) {
+                            errorHtml += `<div class="solution">💡 解决方案: ${solution}</div>`;
+                        }
+                        showError(errorHtml);
+                    } else {
+                        console.log(`第${retryCount}次重试...`);
+                        await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
+                    }
                 }
-            } catch (err) {
-                showError('网络错误: ' + err.message);
-            } finally {
-                hideLoading();
             }
+            
+            hideLoading();
         }
         
         // 显示结果
@@ -333,14 +403,18 @@
             });
             html += '</tr>';
             
-            // 数据行
-            result.table_data.forEach(row => {
+            // 数据行 - 处理数组格式数据（跳过表头行）
+            for (let i = 1; i < result.table_data.length; i++) {
+                const row = result.table_data[i];
                 html += '<tr>';
-                result.headers.forEach(header => {
-                    html += `<td>${row[header] || ''}</td>`;
-                });
+                
+                // 使用索引访问数组数据
+                for (let j = 0; j < result.headers.length; j++) {
+                    html += `<td>${row[j] || ''}</td>`;
+                }
+                
                 html += '</tr>';
-            });
+            }
             
             html += '</table>';
             tableContainer.innerHTML = html;
@@ -361,9 +435,10 @@
             });
             csv += headers.join(',') + '\n';
             
-            // 获取数据
-            table.querySelectorAll('tr').forEach(tr => {
-                const tds = tr.querySelectorAll('td');
+            // 获取数据行（跳过表头行）
+            const rows = table.querySelectorAll('tr');
+            for (let i = 1; i < rows.length; i++) {
+                const tds = rows[i].querySelectorAll('td');
                 if (tds.length > 0) {
                     const row = [];
                     tds.forEach(td => {
@@ -371,7 +446,7 @@
                     });
                     csv += row.join(',') + '\n';
                 }
-            });
+            }
             
             const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement('a');
@@ -400,8 +475,13 @@
         }
         
         function showError(message) {
-            document.getElementById('error').textContent = message;
-            document.getElementById('error').style.display = 'block';
+            const errorDiv = document.getElementById('error');
+            if (typeof message === 'string' && message.includes('<')) {
+                errorDiv.innerHTML = message;
+            } else {
+                errorDiv.textContent = message;
+            }
+            errorDiv.style.display = 'block';
         }
         
         function hideError() {
